@@ -11,7 +11,8 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, unquote, urlparse
+from urllib.request import Request, urlopen
 
 from scrapling.fetchers import Fetcher
 
@@ -54,8 +55,82 @@ def fetch(url: str):
     )
 
 
+def tcgdex_json(path: str):
+    request = Request(
+        f"https://api.tcgdex.net/v2/en/{path.lstrip('/')}",
+        headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
+    )
+    with urlopen(request, timeout=15) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def normalize_name(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", value.lower()).strip()
+
+
+def tcgdex_cardmarket_guide(target: dict) -> dict | None:
+    """Use TCGdex's Cardmarket-linked guide when marketplace HTML is blocked/empty."""
+    card_id = str(target.get("tcgdex_id", "")).strip()
+    if not card_id:
+        match = target.get("app_match") if isinstance(target.get("app_match"), dict) else {}
+        set_name = str(match.get("set", "")).strip()
+        card_name = str(match.get("name", "")).strip()
+        cardmarket_url = str(target.get("cardmarket_url", ""))
+        segments = [unquote(part) for part in urlparse(cardmarket_url).path.split("/") if part]
+        if len(segments) >= 2:
+            set_name = set_name or segments[-2].replace("-", " ")
+            card_name = card_name or segments[-1].replace("-", " ")
+        if not set_name or not card_name:
+            return None
+
+        sets = tcgdex_json("sets")
+        selected_set = next(
+            (item for item in sets if normalize_name(str(item.get("name", ""))) == normalize_name(set_name)),
+            None,
+        )
+        if not selected_set:
+            return None
+        cards = tcgdex_json(f"sets/{selected_set['id']}").get("cards", [])
+        selected_card = next(
+            (item for item in cards if normalize_name(str(item.get("name", ""))) == normalize_name(card_name)),
+            None,
+        )
+        if not selected_card:
+            return None
+        card_id = str(selected_card.get("id", ""))
+        if not card_id:
+            return None
+
+    card = tcgdex_json(f"cards/{card_id}")
+    price = card.get("pricing", {}).get("cardmarket")
+    if not isinstance(price, dict):
+        price = next((
+            item.get("pricing", {}).get("cardmarket")
+            for item in card.get("variants_detailed", [])
+            if isinstance(item.get("pricing", {}).get("cardmarket"), dict)
+        ), None)
+    if not isinstance(price, dict):
+        return None
+    return {
+        key: price.get(source_key)
+        for key, source_key in (
+            ("product_id", "idProduct"), ("trend_eur", "trend"),
+            ("low_eur", "low"), ("average_eur", "avg"),
+            ("average_7d_eur", "avg7"), ("average_30d_eur", "avg30"),
+            ("updated_at", "updated"),
+        )
+    }
+
+
 def scrape_target(target: dict) -> dict:
     result: dict = {"id": str(target.get("id", "")), "name": str(target.get("name", ""))}
+    app_match = target.get("app_match")
+    if isinstance(app_match, dict):
+        result["app_match"] = {
+            key: str(app_match.get(key, ""))
+            for key in ("name", "set", "language", "finish")
+            if app_match.get(key) is not None
+        }
     cardmarket_url = target.get("cardmarket_url")
     if cardmarket_url:
         try:
@@ -77,6 +152,12 @@ def scrape_target(target: dict) -> dict:
             }
         except Exception as exc:  # retain other source results when one site fails
             result["cardmarket"] = {"state": "unavailable", "error": type(exc).__name__}
+        try:
+            guide = tcgdex_cardmarket_guide(target)
+            if guide and any(guide.get(key) for key in ("trend_eur", "low_eur", "average_eur")):
+                result["cardmarket_guide"] = guide
+        except Exception as exc:
+            result["cardmarket_guide"] = {"state": "unavailable", "error": type(exc).__name__}
 
     ebay_query = target.get("ebay_query")
     if ebay_query:
