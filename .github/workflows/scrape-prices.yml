@@ -1,0 +1,46 @@
+name: Actualizar precios públicos
+
+on:
+  schedule:
+    - cron: "17 0,8,16 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: public-price-scrape
+  cancel-in-progress: false
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Descargar el código
+        uses: actions/checkout@v4
+      - name: Preparar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: price_scraper/requirements.txt
+      - name: Instalar Scrapling
+        run: python -m pip install -r price_scraper/requirements.txt
+      - name: Consultar Cardmarket y ventas eBay
+        env:
+          PRICE_TARGETS: ${{ secrets.PRICE_TARGETS }}
+          PRICE_OUTPUT: output/price-results.json
+        run: |
+          if [ -z "$PRICE_TARGETS" ]; then
+            echo "Falta configurar el secreto PRICE_TARGETS en Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+          python price_scraper/scrape_prices.py
+      - name: Guardar el resultado como artefacto privado
+        uses: actions/upload-artifact@v4
+        with:
+          name: price-results-${{ github.run_id }}
+          path: output/price-results.json
+          if-no-files-found: error
+          retention-days: 7
