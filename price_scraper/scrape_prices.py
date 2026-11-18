@@ -68,6 +68,19 @@ def normalize_name(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", value.lower()).strip()
 
 
+def cardmarket_guide_values(price: dict, variant: str = "") -> dict:
+    return {
+        "product_id": price.get("idProduct"),
+        "variant": variant,
+        "trend_eur": price.get("trend"),
+        "low_eur": price.get("low"),
+        "average_eur": price.get("avg"),
+        "average_7d_eur": price.get("avg7"),
+        "average_30d_eur": price.get("avg30"),
+        "updated_at": price.get("updated"),
+    }
+
+
 def tcgdex_cardmarket_guide(target: dict) -> dict | None:
     """Use TCGdex's Cardmarket-linked guide when marketplace HTML is blocked/empty."""
     card_id = str(target.get("tcgdex_id", "")).strip()
@@ -102,24 +115,28 @@ def tcgdex_cardmarket_guide(target: dict) -> dict | None:
             return None
 
     card = tcgdex_json(f"cards/{card_id}")
+    prices_by_product: dict[int, dict] = {}
+    for item in card.get("variants_detailed", []):
+        if not isinstance(item, dict):
+            continue
+        price = item.get("pricing", {}).get("cardmarket")
+        if not isinstance(price, dict):
+            continue
+        product_id = price.get("idProduct")
+        if product_id is None:
+            continue
+        variant = str(item.get("subtype") or item.get("type") or "").strip()
+        prices_by_product.setdefault(int(product_id), cardmarket_guide_values(price, variant))
+
     price = card.get("pricing", {}).get("cardmarket")
-    if not isinstance(price, dict):
-        price = next((
-            item.get("pricing", {}).get("cardmarket")
-            for item in card.get("variants_detailed", [])
-            if isinstance(item.get("pricing", {}).get("cardmarket"), dict)
-        ), None)
-    if not isinstance(price, dict):
+    if not isinstance(price, dict) and prices_by_product:
+        price = next(iter(prices_by_product.values()))
+        primary = price
+    elif isinstance(price, dict):
+        primary = cardmarket_guide_values(price)
+    else:
         return None
-    return {
-        key: price.get(source_key)
-        for key, source_key in (
-            ("product_id", "idProduct"), ("trend_eur", "trend"),
-            ("low_eur", "low"), ("average_eur", "avg"),
-            ("average_7d_eur", "avg7"), ("average_30d_eur", "avg30"),
-            ("updated_at", "updated"),
-        )
-    }
+    return {**primary, "variants": list(prices_by_product.values())}
 
 
 def scrape_target(target: dict) -> dict:

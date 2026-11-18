@@ -1,6 +1,6 @@
 # Scrapling de precios
 
-Este flujo consulta páginas públicas de Cardmarket y ventas completadas de eBay ES cada 8 horas (00:17, 08:17 y 16:17 UTC). Cuando Cardmarket bloquea o no muestra ofertas, consulta el precio guía Cardmarket de TCGdex para añadir tendencia, mínimo y medias recientes; esos datos son referencias agregadas, no ofertas actuales. No usa navegador furtivo, proxies ni resolución de desafíos.
+Este flujo consulta páginas públicas de Cardmarket y ventas completadas de eBay ES cada 8 horas (00:17, 08:17 y 16:17 UTC). Cuando Cardmarket bloquea o no muestra ofertas, consulta el precio guía Cardmarket de TCGdex para añadir tendencias, mínimos y medias recientes por impresión (por ejemplo, ilimitada y Shadowless); esos datos son referencias agregadas, no ofertas actuales. No usa navegador furtivo, proxies ni resolución de desafíos.
 
 ## Configuración
 
